@@ -1,6 +1,8 @@
 #! /usr/bin/env python3
 
-import os, sys, time, re
+import os
+import re
+import sys
 
 pid = os.getpid()
 
@@ -12,52 +14,60 @@ pid = os.getpid()
 while 1:
     strToPrint = f"{os.getcwd()} $ "
     os.write(1, strToPrint.encode())
-    input = os.read(0, 10000).split()  # read up to 10k bytes
-    if len(input) == 0: continue     # done if nothing read
+    user_input = os.read(0, 10000).split()  # read up to 10k bytes
+    if len(user_input) == 0:
+        continue  # done if nothing read
 
-    if input[0].decode("utf-8") == "exit":
-        if len(input) > 1:
-            print("Program terminated with exit code", input[1].decode("utf-8"))
-            sys.exit(int(input[1]))
-        print("Program terminated with exit code", input[0].decode("utf-8"))
+    # Built-in commands for exit and cd
+    if user_input[0].decode() == "exit":
+        if len(user_input) > 1:
+            print("Program terminated with exit code", user_input[1].decode())
+            sys.exit(int(user_input[1]))
+        print("Program terminated with exit code", user_input[0].decode())
         sys.exit(0)
 
-    if input[0].decode("utf-8") == "cd":
-        if len(input) > 1:
+    if user_input[0].decode() == "cd":
+        if len(user_input) > 1:
             try:
-                os.chdir(input[1])
+                os.chdir(user_input[1])
             except FileNotFoundError:
-                print(f'{input[0].decode("utf-8")}: no such file or directory: {input[1].decode("utf-8")}')
+                print(f'{user_input[0].decode()}: No such file or directory: {user_input[1].decode()}')
         else:
             os.chdir(os.path.expanduser("~"))
 
     else:
-        os.write(1, ("About to fork (pid:%d)\n" % pid).encode())
-
         rc = os.fork()
 
         if rc < 0:
-            os.write(2, ("fork failed, returning %d\n" % rc).encode())
             sys.exit(1)
 
-        elif rc == 0:                   # child
-            os.write(1, ("Child: My pid==%d.  Parent's pid=%d\n" %
-                         (os.getpid(), pid)).encode())
-            args = [input[0]]
-            for dir in re.split(":", os.environ['PATH']): # try each directory in the path
-                program = "%s/%s" % (dir, args[0])
-                os.write(1, ("Child:  ...trying to exec %s\n" % program).encode())
+        elif rc == 0:  # child
+            # Redirection
+            # > goes into
+            # < goes out of
+            if b'>' in user_input:
+                os.close(1)  # redirect child's stdout
+                os.open(user_input[2], os.O_CREAT | os.O_WRONLY)
+                os.set_inheritable(1, True)
+                user_input = user_input[:1]
+
+            elif b'<' in user_input:
+                os.close(0) # close stdin
+                os.open(user_input[2], os.O_RDONLY) # redirect stdin
+                os.set_inheritable(0, True)
+                user_input = user_input[:1]
+
+            for directory in re.split(":", os.environ['PATH']):  # try each directory in the path
+                # Check: why are items printing here even though they were already erased?
+                program = "%s/%s" % (directory, user_input[0].decode())
                 try:
-                    os.execve(program, args, os.environ) # try to exec program
-                except FileNotFoundError:             # ...expected
-                    pass                              # ...fail quietly
+                    os.execve(program, user_input, os.environ)  # try to exec program
+                except FileNotFoundError:  # ...expected
+                    pass  # ...fail quietly
 
-            os.write(2, ("Child:    Could not exec %s\n" % args[0]).encode())
-            sys.exit(1)                 # terminate with error
+            os.write(2, ("\nChild:    Could not exec %s\n" % user_input[0]).encode())
+            sys.exit(1)  # terminate with error
 
-        else:                           # parent (forked ok)
-            os.write(1, ("Parent: My pid=%d.  Child's pid=%d\n" %
-                         (pid, rc)).encode())
+        else:  # parent (forked ok)
             childPidCode = os.wait()
-            os.write(1, ("Parent: Child %d terminated with exit code %d\n" %
-                         childPidCode).encode())
+
