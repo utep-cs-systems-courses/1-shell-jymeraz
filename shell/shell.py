@@ -21,13 +21,12 @@ def exec(user_input):
 
 def pipe(user_input):
     pr, pw = os.pipe()
-    rc = os.fork()
+    rc_1 = os.fork() # call first fork to write
 
-    if rc < 0:
-        print("fork failed, returning %d\n" % rc, file=sys.stderr)
+    if rc_1 < 0: # fork failed
         sys.exit(1)
 
-    if rc == 0: # writing
+    elif rc_1 == 0: # writing
         os.close(1) # close standard output
         os.dup(pw)
         os.set_inheritable(1, True)
@@ -37,23 +36,30 @@ def pipe(user_input):
 
         user_input = user_input[0:user_input.index("|")]
         exec(user_input)
-
-        os.write(2, ("\nChild:    Could not exec %s\n" % user_input[0]).encode())
         sys.exit(1)
 
-    elif rc > 0: # reading
-        os.close(0) # close standard input
-        os.dup(pr)
-        os.set_inheritable(0, True)
+    else: # parent (forked ok)
+        rc_2 = os.fork() # call second fork to read
 
+        if rc_2 < 0: # fork failed
+            sys.exit(1)
+
+        elif rc_2 == 0:  # reading
+            os.close(0) # close standard input
+            os.dup(pr)
+            os.set_inheritable(0, True)
+
+            for fd in (pr, pw):
+                os.close(fd)
+
+            user_input = user_input[user_input.index("|") + 1:]
+            exec(user_input)
+            sys.exit(1)
+        else:
+            childPidCode = os.wait()
         for fd in (pr, pw):
             os.close(fd)
-
-        user_input = user_input[user_input.index("|") + 1:]
-        exec(user_input)
-
-        os.write(2, ("\nChild:    Could not exec %s\n" % user_input[0]).encode())
-        sys.exit(1)
+        childPidCode = os.wait()
 
 
 while True:
@@ -85,31 +91,26 @@ while True:
         pipe(user_input)
 
     else:
-
         rc = os.fork()
 
-        if rc < 0:
+        if rc < 0: # fork failed
             sys.exit(1)
 
         elif rc == 0:  # child
             # Redirection
-            # > goes into
-            # < goes out of
-            if '>' in user_input:
+            if '>' in user_input: # > goes into
                 os.close(1)  # redirect child's stdout
                 os.open(user_input[2], os.O_CREAT | os.O_WRONLY)
                 os.set_inheritable(1, True)
                 user_input = user_input[:1]
 
-            elif '<' in user_input:
+            elif '<' in user_input: # < goes out of
                 os.close(0)  # close stdin
                 os.open(user_input[2], os.O_RDONLY)  # redirect stdin
                 os.set_inheritable(0, True)
                 user_input = user_input[:1]
 
             exec(user_input)
-
-            os.write(2, ("\nChild:    Could not exec %s\n" % user_input[0]).encode())
             sys.exit(1)  # terminate with error
 
         else:  # parent (forked ok)
